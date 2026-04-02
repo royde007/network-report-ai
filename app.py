@@ -17,7 +17,7 @@ st.subheader("Upload Folders/Files")
 pre_files = st.file_uploader("Upload BASELINE (Pre) Reports", accept_multiple_files=True)
 post_files = st.file_uploader("Upload CURRENT (Post) Reports", accept_multiple_files=True)
 
-if pre_files and post_files and api_key:
+if api_key:
     if st.button("🚀 Run AI Comparison"):
         # Map files by name to match them
         pre_dict = {f.name: f for f in pre_files}
