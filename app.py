@@ -7,7 +7,7 @@ from langchain_openai import ChatOpenAI
 from langchain_experimental.agents import create_pandas_dataframe_agent
 
 st.set_page_config(page_title="AI Report Agent", layout="wide")
-st.title("📡 Global Network Report Comparison Agent")
+st.title("📡 Global Report Comparison Agent")
 
 # 1. User enters their own API Key
 api_key = st.sidebar.text_input("Enter OpenAI API Key", type="password")
