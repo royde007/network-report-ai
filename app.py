@@ -23,29 +23,27 @@ with st.sidebar:
     st.header("📋 Audit Instructions")
     st.markdown("""
     1. **Upload Files**: Select **PRE** and **POST** reports.
-    2. **Wait for Upload**: Large files (20MB+) take a moment to transfer.
-    3. **Automated Skip**: 
+    2. **Automated Skip**: 
         * 1st sheet and *General Information* are ignored.
         * Sheets ending in **'Pivot'** are ignored.
+    3. **Matching**: Rows are aligned using **'Sector Name'** and **'Carrier'**.
     4. **Output**: Two tabs (Summary + Detailed) with side-by-side comparison.
     """)
     st.divider()
-    st.caption("v3.1 | High-Speed Indexing | PRE vs POST")
+    st.caption("v3.2 | PRE vs POST | High Speed")
 
 # --- HELPER FUNCTIONS ---
 
 def streaming_load(file_obj, sheet_name):
-    """Fast streaming load that only grabs data rows."""
+    """Memory-efficient load of data rows."""
     try:
         file_obj.seek(0)
-        # Using read_only for memory efficiency
         wb = load_workbook(file_obj, read_only=True, data_only=True)
         if sheet_name not in wb.sheetnames:
             return None
         ws = wb[sheet_name]
         data = []
         header_row_idx = None
-        # Scan for headers
         for i, row in enumerate(ws.iter_rows(values_only=True), 1):
             if i > 50: break 
             row_vals = [str(v).strip().lower() if v is not None else "" for v in row]
@@ -63,18 +61,16 @@ def streaming_load(file_obj, sheet_name):
     return None
 
 def create_comparison_report(df1, df2):
-    """High-speed comparison using Pandas Indexing."""
-    # Find key columns
+    """Generates the two-tab Excel report matching the desired output."""
     cols_pre_map = {str(c).strip().lower(): c for c in df1.columns}
     cols_post_map = {str(c).strip().lower(): c for c in df2.columns}
     sec_col = cols_pre_map['sector name']
     car_col = cols_pre_map['carrier']
 
-    # Create keys and set index for O(1) lookup speed
+    # Create Keys & Set Index
     df1['K'] = df1[sec_col].astype(str).str.strip() + '|' + df1[car_col].astype(str).str.strip()
     df2['K'] = df2[cols_post_map['sector name']].astype(str).str.strip() + '|' + df2[cols_post_map['carrier']].astype(str).str.strip()
     
-    # Drop rows with duplicate keys to prevent errors
     df1 = df1.drop_duplicates(subset='K').set_index('K')
     df2 = df2.drop_duplicates(subset='K').set_index('K')
     
@@ -85,7 +81,7 @@ def create_comparison_report(df1, df2):
     ws_det = wb.active
     ws_det.title = "Comparison Results"
     
-    # Headers
+    # Headers for Detailed Comparison
     headers = [sec_col, car_col, 'Status']
     for col in other_cols:
         headers += [f"{col}\n(PRE)", f"{col}\n(POST)", f"{col}\nMatch?"]
@@ -97,41 +93,33 @@ def create_comparison_report(df1, df2):
 
     stats = {"match": 0, "mismatch": 0, "only_pre": 0, "only_post": 0}
     
-    # Comparison Loop (Now much faster with indexing)
+    # Process rows
     for row_idx, key in enumerate(all_keys, 2):
-        in_pre = key in df1.index
-        in_post = key in df2.index
         k_parts = key.split('|', 1)
-        
         ws_det.cell(row=row_idx, column=1, value=k_parts[0]).border = BORDER
         ws_det.cell(row=row_idx, column=2, value=k_parts[1]).border = BORDER
         status_cell = ws_det.cell(row=row_idx, column=3)
         status_cell.border = BORDER
 
-        if not in_pre:
+        if key not in df1.index:
             status_cell.value, status_cell.fill, stats["only_post"] = "ONLY IN POST", YELLOW_FILL, stats["only_post"] + 1
-        elif not in_post:
+        elif key not in df2.index:
             status_cell.value, status_cell.fill, stats["only_pre"] = "ONLY IN PRE", YELLOW_FILL, stats["only_pre"] + 1
         else:
             status_cell.value = "IN BOTH FILES"
             row1, row2 = df1.loc[key], df2.loc[key]
             has_mismatch, col_ptr = False, 4
             for col in other_cols:
-                v1 = str(row1.get(col, 'NULL'))
-                v2 = str(row2.get(col, 'NULL'))
-                c1 = ws_det.cell(row=row_idx, column=col_ptr, value=v1)
-                c2 = ws_det.cell(row=row_idx, column=col_ptr+1, value=v2)
+                v1, v2 = str(row1.get(col, 'NULL')), str(row2.get(col, 'NULL'))
+                c1, c2 = ws_det.cell(row=row_idx, column=col_ptr, value=v1), ws_det.cell(row=row_idx, column=col_ptr+1, value=v2)
                 cm = ws_det.cell(row=row_idx, column=col_ptr+2)
-                
                 if v1 == v2:
                     cm.value, cm.fill = "✓ MATCH", GREEN_FILL
                 else:
                     cm.value, cm.fill, has_mismatch = "✗ MISMATCH", LIGHT_RED_FILL, True
                     c1.fill, c2.fill = RED_FILL, RED_FILL
-                
                 for c in [c1, c2, cm]: c.border = BORDER
                 col_ptr += 3
-            
             if has_mismatch:
                 status_cell.fill, stats["mismatch"] = LIGHT_RED_FILL, stats["mismatch"] + 1
             else:
@@ -156,7 +144,7 @@ def create_comparison_report(df1, df2):
     wb.save(output)
     return output.getvalue()
 
-# --- MAIN APP ---
+# --- INTERFACE ---
 
 col1, col2 = st.columns(2)
 with col1:
@@ -174,25 +162,23 @@ if st.button("🚀 Run Global Audit"):
         with zipfile.ZipFile(zip_buffer, "w") as zf:
             for fname, fobj in pre_dict.items():
                 if fname in post_dict:
-                    st.info(f"📁 Processing Report: {fname}")
-                    # Fast sheet listing using Calamine
+                    st.info(f"📁 Processing: {fname}")
                     xl = pd.ExcelFile(fobj, engine='calamine')
                     for i, sname in enumerate(xl.sheet_names):
                         if i == 0 or sname.lower().endswith('pivot') or sname == "General Information":
-                            st.write(f"   ⏩ Skipping: {sname}")
                             continue
-                        
                         df_pre = streaming_load(fobj, sname)
                         df_post = streaming_load(post_dict[fname], sname)
-                        
                         if df_pre is not None and df_post is not None:
-                            st.write(f"   ⚙️ Analyzing Sheet: {sname}...")
+                            st.write(f"   ⚙️ Analyzing: {sname}...")
                             report_bytes = create_comparison_report(df_pre, df_post)
                             zf.writestr(f"{fname.split('.')[0]}/{sname}_Audit.xlsx", report_bytes)
                             processed_any = True
         
         if processed_any:
             st.success("🏁 Audit Complete!")
-            st.download_button("📥 Download ZIP", zip_buffer.getvalue(), "Network_Audit_Results.zip")
+            st.download_button("📥 Download Results", zip_buffer.getvalue(), "Network_Audit_Results.zip")
         else:
-            st.error("No valid
+            st.error("No valid sheets found to compare. Ensure 'Sector Name' exists in both files.")
+    else:
+        st.warning("Please upload both PRE and POST files.")
