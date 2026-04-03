@@ -23,7 +23,7 @@ with st.sidebar:
     6. **Download Results**: A ZIP file will be generated, containing a folder for each report and separate Excel files for each sheet.
     """)
     st.divider()
-    st.caption("v2.0 | Pure Python Logic (No API Required)")
+    st.caption("v2.1 | Engine: Calamine | No API Required")
 
 # --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
@@ -62,7 +62,7 @@ def compare_sheets(df_pre, df_post, is_first_sheet):
 
     # --- SPECIAL MODIFICATION FOR 1st SHEET ---
     if is_first_sheet:
-        # Placeholder for specific first-sheet rules (e.g., column filtering)
+        # Placeholder for specific first-sheet rules
         pass
 
     df1, df2 = df_pre.copy(), df_post.copy()
@@ -84,50 +84,3 @@ def compare_sheets(df_pre, df_post, is_first_sheet):
         for col in compare_cols:
             v1 = r1.iloc[0][col] if not r1.empty and col in r1.columns else 'N/A'
             v2 = r2.iloc[0][col] if not r2.empty and col in r2.columns else 'N/A'
-            
-            row_data[f'{col} (Pre)'] = v1
-            row_data[f'{col} (Post)'] = v2
-            row_data[f'{col} Match'] = '✓' if str(v1) == str(v2) else '✗'
-        results.append(row_data)
-
-    # Generate the Excel file in memory
-    temp_buf = io.BytesIO()
-    pd.DataFrame(results).to_excel(temp_buf, index=False)
-    return apply_formatting(temp_buf)
-
-# --- EXECUTION LOGIC ---
-if pre_files and post_files:
-    if st.button("🚀 Run Global Audit"):
-        pre_dict = {f.name: f for f in pre_files}
-        post_dict = {f.name: f for f in post_files}
-        
-        master_zip = io.BytesIO()
-        with zipfile.ZipFile(master_zip, "w") as zf:
-            for fname, fobj in pre_dict.items():
-                if fname in post_dict:
-                    # Creating a folder hierarchy inside the ZIP
-                    folder_name = fname.split('.')[0]
-                    st.write(f"📂 **Analyzing Folder:** {folder_name}")
-                    
-                    pre_sheets = pd.read_excel(fobj, sheet_name=None)
-                    post_sheets = pd.read_excel(post_dict[fname], sheet_name=None)
-                    
-                    for i, (sname, df_pre) in enumerate(pre_sheets.items()):
-                        if sname in post_sheets:
-                            is_first = (i == 0)
-                            result_data = compare_sheets(df_pre, post_sheets[sname], is_first)
-                            
-                            if result_data:
-                                # Save inside report-specific folder
-                                zf.writestr(f"{folder_name}/{sname}_Audit.xlsx", result_data)
-                                st.write(f"   ✅ Compared: {sname}")
-                            else:
-                                st.write(f"   ⏩ Skipped: {sname} (Non-data sheet)")
-
-        st.success("Audit Complete!")
-        st.download_button(
-            label="📥 Download Comparison Results (ZIP)",
-            data=master_zip.getvalue(),
-            file_name="Network_Audit_Results.zip",
-            mime="application/zip"
-        )
