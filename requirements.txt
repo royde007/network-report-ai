@@ -5,3 +5,7 @@ langchain-experimental
 openpyxl
 xlsxwriter
 tabulate
+streamlit
+pandas
+openpyxl
+xlsxwriter
