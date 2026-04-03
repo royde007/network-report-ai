@@ -7,7 +7,7 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Network Report Auditor", layout="wide")
-st.title("📡 Multi-Sheet Automated Comparison Tool")
+st.title("📡 Sector & Carrier Keyed Comparison Tool")
 
 # --- STYLES & CONSTANTS ---
 RED_FILL = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid')
@@ -23,10 +23,10 @@ THIN_BORDER = Border(left=Side(style='thin'), right=Side(style='thin'),
 with st.sidebar:
     st.header("📋 Processing Rules")
     st.info("""
-    1. **Skip**: 1st Sheet ('General Information') is ignored.
+    1. **Skip**: 1st Sheet (General Information) is ignored.
     2. **Skip**: Any sheet name ending in 'Pivot' is ignored.
-    3. **Key**: First 2 columns of every sheet are used as the Matching Key.
-    4. **Output**: Individual reports per sheet, zipped for download.
+    3. **Key**: Logic searches for **'Sector Name'** and **'Carrier'** columns anywhere in the sheet to create the unique ID.
+    4. **Output**: Formatted Excel reports for each valid sheet.
     """)
 
 # --- FILE UPLOADERS ---
@@ -36,26 +36,45 @@ with col1:
 with col2:
     post_files = st.file_uploader("Upload CURRENT (Post) Reports", accept_multiple_files=True)
 
-def compare_dataframes_to_excel(df1, df2, sheet_name):
-    """Core logic to compare two dataframes and return a formatted Excel binary."""
-    # Data Cleaning
-    df1 = df1.dropna(how='all').dropna(axis=1, how='all')
-    df2 = df2.dropna(how='all').dropna(axis=1, how='all')
+def find_key_columns(columns):
+    """Dynamically finds the 'Sector Name' and 'Carrier' columns."""
+    cols_clean = [str(c).strip().lower() for c in columns]
+    s_idx = None
+    c_idx = None
     
-    # Identify Keys
-    key_cols = list(df1.columns[:2])
-    df1['Comp_Key'] = df1[key_cols[0]].astype(str).str.strip() + '|' + df1[key_cols[1]].astype(str).str.strip()
-    df2['Comp_Key'] = df2[key_cols[0]].astype(str).str.strip() + '|' + df2[key_cols[1]].astype(str).str.strip()
+    for i, name in enumerate(cols_clean):
+        if name == "sector name": s_idx = i
+        if name == "carrier": c_idx = i
+        
+    if s_idx is not None and c_idx is not None:
+        return columns[s_idx], columns[c_idx]
+    return None, None
+
+def compare_dataframes_to_excel(df1, df2, sheet_name):
+    # Standardize column headers
+    df1.columns = df1.columns.astype(str).str.strip()
+    df2.columns = df2.columns.astype(str).str.strip()
+
+    # Find the Specific Key Columns
+    sec_col, car_col = find_key_columns(df1.columns)
+    
+    if not sec_col or not car_col:
+        return "ERROR: 'Sector Name' or 'Carrier' columns not found in this sheet."
+
+    # Create Composite Key
+    df1['Comp_Key'] = df1[sec_col].astype(str) + '|' + df1[car_col].astype(str)
+    df2['Comp_Key'] = df2[sec_col].astype(str) + '|' + df2[car_col].astype(str)
     
     all_keys = sorted(set(df1['Comp_Key']).union(set(df2['Comp_Key'])))
-    other_cols = sorted(set(df1.columns) | set(df2.columns) - set(key_cols + ['Comp_Key']))
+    # Columns to compare (everything except the keys)
+    other_cols = sorted(set(df1.columns) | set(df2.columns) - {sec_col, car_col, 'Comp_Key'})
     
     wb = Workbook()
     ws = wb.active
     ws.title = "Comparison Results"
     
-    # Headers
-    headers = [key_cols[0], key_cols[1], 'Status']
+    # Write Headers
+    headers = [sec_col, car_col, 'Status']
     for col in other_cols:
         headers += [f"{col} (Pre)", f"{col} (Post)", f"{col} Match?"]
     
@@ -63,7 +82,7 @@ def compare_dataframes_to_excel(df1, df2, sheet_name):
         cell = ws.cell(row=1, column=c_idx, value=h)
         cell.fill, cell.font, cell.border = HEADER_FILL, HEADER_FONT, THIN_BORDER
 
-    # Comparison Loop
+    # Comparison Process
     row_idx = 2
     for key in all_keys:
         r1 = df1[df1['Comp_Key'] == key]
@@ -72,7 +91,6 @@ def compare_dataframes_to_excel(df1, df2, sheet_name):
         
         ws.cell(row=row_idx, column=1, value=k_parts[0]).border = THIN_BORDER
         ws.cell(row=row_idx, column=2, value=k_parts[1]).border = THIN_BORDER
-        
         status_cell = ws.cell(row=row_idx, column=3)
         status_cell.border = THIN_BORDER
 
@@ -97,22 +115,20 @@ def compare_dataframes_to_excel(df1, df2, sheet_name):
                     cm.value, cm.fill = "✓ MATCH", GREEN_FILL
                 else:
                     cm.value, cm.fill, has_mismatch = "✗ MISMATCH", LIGHT_RED_FILL, True
-                    c1.fill = RED_FILL
-                    c2.fill = RED_FILL
+                    c1.fill, c2.fill = RED_FILL, RED_FILL
                 
                 for c in [c1, c2, cm]: c.border = THIN_BORDER
                 col_ptr += 3
             status_cell.fill = LIGHT_RED_FILL if has_mismatch else GREEN_FILL
-            
         row_idx += 1
 
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
 
-# --- EXECUTION LOGIC ---
+# --- EXECUTION ---
 if pre_files and post_files:
-    if st.button("🚀 Run Multi-Sheet Comparison"):
+    if st.button("🚀 Run Global Comparison"):
         pre_dict = {f.name: f for f in pre_files}
         post_dict = {f.name: f for f in post_files}
         
@@ -121,26 +137,29 @@ if pre_files and post_files:
             for fname, fobj in pre_dict.items():
                 if fname in post_dict:
                     report_name = fname.split('.')[0]
-                    st.write(f"📂 Processing Report: **{report_name}**")
+                    st.write(f"📁 Processing: **{report_name}**")
                     
-                    # Use Calamine for speed and Boolean handling
                     pre_sheets = pd.read_excel(fobj, sheet_name=None, engine='calamine')
                     post_sheets = pd.read_excel(post_dict[fname], sheet_name=None, engine='calamine')
                     
                     for i, (sname, df_pre) in enumerate(pre_sheets.items()):
-                        # 1. Skip 1st Sheet (General Info)
+                        # 1. Skip 1st Sheet
                         if i == 0:
                             st.write(f"   ⏩ Skipped 1st Sheet: {sname}")
                             continue
-                        # 2. Skip Sheets ending with Pivot
+                        # 2. Skip Pivot Sheets
                         if sname.lower().endswith('pivot'):
                             st.write(f"   ⏩ Skipped Pivot: {sname}")
                             continue
                         
                         if sname in post_sheets:
-                            st.write(f"   ✅ Comparing Data Sheet: {sname}")
-                            result_xlsx = compare_dataframes_to_excel(df_pre, post_sheets[sname], sname)
-                            zf.writestr(f"{report_name}/{sname}_Comparison.xlsx", result_xlsx)
+                            st.write(f"   ✅ Analyzing Sheet: {sname}")
+                            result = compare_dataframes_to_excel(df_pre, post_sheets[sname], sname)
+                            
+                            if isinstance(result, str) and "ERROR" in result:
+                                st.warning(f"   ⚠️ {sname}: {result}")
+                            else:
+                                zf.writestr(f"{report_name}/{sname}_Comparison.xlsx", result)
 
-        st.success("🏁 All Comparisons Complete!")
-        st.download_button("📥 Download ZIP of Reports", zip_buffer.getvalue(), "Network_Audit_Results.zip")
+        st.success("🏁 Comparison Finished!")
+        st.download_button("📥 Download ZIP", zip_buffer.getvalue(), "Network_Audit_Results.zip")
