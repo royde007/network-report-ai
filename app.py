@@ -5,27 +5,19 @@ import zipfile
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
 
-# --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Network Report Auditor", layout="wide")
-st.title("📡 Multi-Sheet Sector Comparison Agent")
+st.title("📡 Multi-Sheet Network Comparison Agent")
 
-# --- INSTRUCTION PANEL (Sidebar) ---
 with st.sidebar:
     st.header("📋 Audit Instructions")
     st.markdown("""
-    **Follow these steps to generate your report:**
-    
-    1. **Upload Files**: Select your 'Pre' (Baseline) and 'Post' (Current) reports in the main panel.
-    2. **Automatic Filtering**: The tool scans all tabs. Sheets like *Pivot Tables* or *Histograms* that lack 'Sector Name' columns are automatically skipped.
-    3. **Smart Alignment**: Data is matched using a **Composite Key** (Sector Name + Carrier) to ensure rows are compared accurately even if they moved.
-    4. **1st Sheet Logic**: The first tab of every report undergoes a specialized validation check.
-    5. **Visual Highlights**: Any cell that has changed between the two reports will be highlighted in **Red**.
-    6. **Download Results**: A ZIP file will be generated, containing a folder for each report and separate Excel files for each sheet.
+    1. **Upload Files**: Select 'Pre' and 'Post' reports.
+    2. **Smart Filtering**: Only sheets ending in **'Pivot'** are skipped.
+    3. **General Info Logic**: The first sheet is compared as a Parameter list.
+    4. **Data Sheet Logic**: Other sheets are matched row-by-row based on available headers.
+    5. **Highlights**: Differences are marked in **Red**.
     """)
-    st.divider()
-    st.caption("v2.1 | Engine: Calamine | No API Required")
 
-# --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
 with col1:
     pre_files = st.file_uploader("Upload BASELINE (Pre) Reports", accept_multiple_files=True)
@@ -33,20 +25,16 @@ with col2:
     post_files = st.file_uploader("Upload CURRENT (Post) Reports", accept_multiple_files=True)
 
 def apply_formatting(output_buffer):
-    """Applies Red highlighting to mismatched cells in the output Excel."""
     output_buffer.seek(0)
     wb = load_workbook(output_buffer)
     ws = wb.active
     red_fill = PatternFill(start_color='FFCCCC', end_color='FFCCCC', fill_type='solid')
     
-    # Locate all columns ending with 'Match'
     match_cols = [i for i, cell in enumerate(ws[1], 1) if cell.value and 'Match' in str(cell.value)]
     
-    # Loop through rows and highlight cells where Match is '✗'
     for row_idx in range(2, ws.max_row + 1):
         for col_idx in match_cols:
             if ws.cell(row=row_idx, column=col_idx).value == '✗':
-                # Highlight Pre Value (2 columns back), Post Value (1 column back), and Status
                 ws.cell(row=row_idx, column=col_idx-2).fill = red_fill
                 ws.cell(row=row_idx, column=col_idx-1).fill = red_fill
                 ws.cell(row=row_idx, column=col_idx).fill = red_fill
@@ -55,46 +43,58 @@ def apply_formatting(output_buffer):
     wb.save(final_output)
     return final_output.getvalue()
 
-def compare_sheets(df_pre, df_post, is_first_sheet):
-    """Core logic to align rows via Composite Key and detect differences."""
-    # SKIP logic: Validate if essential headers exist
-    if 'Sector Name' not in df_pre.columns or 'Carrier' not in df_pre.columns:
-        return None
-
-    # First sheet logic hook
-    if is_first_sheet:
-        pass
-
-    df1, df2 = df_pre.copy(), df_post.copy()
+def compare_general_info(df_pre, df_post):
+    """Specific logic for the 1st sheet: Parameter-Value comparison."""
+    # Assume 1st column is Parameter Name, 2nd is Value
+    df1 = df_pre.iloc[:, :2].copy()
+    df2 = df_post.iloc[:, :2].copy()
+    df1.columns = ['Parameter', 'Value_Pre']
+    df2.columns = ['Parameter', 'Value_Post']
     
-    # Create the unique ID for alignment
-    df1['Key'] = df1['Sector Name'].astype(str) + '|' + df1['Carrier'].astype(str)
-    df2['Key'] = df2['Sector Name'].astype(str) + '|' + df2['Carrier'].astype(str)
+    merged = pd.merge(df1, df2, on='Parameter', how='outer')
+    merged['Match'] = merged.apply(lambda x: '✓' if str(x['Value_Pre']) == str(x['Value_Post']) else '✗', axis=1)
     
-    all_keys = sorted(set(df1['Key']).union(set(df2['Key'])))
-    compare_cols = sorted(set(df1.columns).union(set(df2.columns)) - {'Sector Name', 'Carrier', 'Key'})
+    temp_buf = io.BytesIO()
+    merged.to_excel(temp_buf, index=False)
+    return apply_formatting(temp_buf)
+
+def compare_standard_sheets(df_pre, df_post):
+    """Generic row-by-row comparison for data sheets."""
+    # Attempt to find a unique key (Sector/Carrier) or use index if not found
+    if 'Sector Name' in df_pre.columns and 'Carrier' in df_pre.columns:
+        df_pre['Key'] = df_pre['Sector Name'].astype(str) + '|' + df_pre['Carrier'].astype(str)
+        df_post['Key'] = df_post['Sector Name'].astype(str) + '|' + df_post['Carrier'].astype(str)
+        key_col = 'Key'
+    else:
+        # Fallback to row index if no specific key is found
+        df_pre = df_pre.reset_index().rename(columns={'index': 'Row_ID'})
+        df_post = df_post.reset_index().rename(columns={'index': 'Row_ID'})
+        key_col = 'Row_ID'
+
+    all_cols = [c for c in df_pre.columns if c not in [key_col, 'Sector Name', 'Carrier']]
     
     results = []
-    for k in all_keys:
-        sec, car = k.split('|', 1)
-        r1 = df1[df1['Key'] == k]
-        r2 = df2[df2['Key'] == k]
+    # Merge on the key to align rows
+    merged = pd.merge(df_pre, df_post, on=key_col, how='outer', suffixes=('_pre', '_post'))
+    
+    for _, row in merged.iterrows():
+        res_row = {}
+        # Keep identifier columns if they exist
+        if 'Sector Name_pre' in row: res_row['Sector Name'] = row['Sector Name_pre']
+        if 'Carrier_pre' in row: res_row['Carrier'] = row['Carrier_pre']
         
-        row_data = {'Sector Name': sec, 'Carrier': car}
-        for col in compare_cols:
-            v1 = r1.iloc[0][col] if not r1.empty and col in r1.columns else 'N/A'
-            v2 = r2.iloc[0][col] if not r2.empty and col in r2.columns else 'N/A'
-            
-            row_data[f'{col} (Pre)'] = v1
-            row_data[f'{col} (Post)'] = v2
-            row_data[f'{col} Match'] = '✓' if str(v1) == str(v2) else '✗'
-        results.append(row_data)
+        for col in all_cols:
+            v1 = row.get(f'{col}_pre', 'N/A')
+            v2 = row.get(f'{col}_post', 'N/A')
+            res_row[f'{col} (Pre)'] = v1
+            res_row[f'{col} (Post)'] = v2
+            res_row[f'{col} Match'] = '✓' if str(v1) == str(v2) else '✗'
+        results.append(res_row)
 
     temp_buf = io.BytesIO()
     pd.DataFrame(results).to_excel(temp_buf, index=False)
     return apply_formatting(temp_buf)
 
-# --- EXECUTION LOGIC ---
 if pre_files and post_files:
     if st.button("🚀 Run Global Audit"):
         pre_dict = {f.name: f for f in pre_files}
@@ -105,30 +105,34 @@ if pre_files and post_files:
             for fname, fobj in pre_dict.items():
                 if fname in post_dict:
                     folder_name = fname.split('.')[0]
-                    st.write(f"📂 **Analyzing Folder:** {folder_name}")
+                    st.write(f"📁 **Analyzing Folder:** {folder_name}")
                     
                     try:
-                        # Using 'calamine' engine to avoid Boolean value errors
                         pre_sheets = pd.read_excel(fobj, sheet_name=None, engine='calamine')
                         post_sheets = pd.read_excel(post_dict[fname], sheet_name=None, engine='calamine')
                         
                         for i, (sname, df_pre) in enumerate(pre_sheets.items()):
-                            if sname in post_sheets:
-                                is_first = (i == 0)
-                                result_data = compare_sheets(df_pre, post_sheets[sname], is_first)
+                            # RULE 1: Skip only if name ends with 'Pivot'
+                            if sname.lower().endswith('pivot'):
+                                st.write(f"   ⏩ Skipped: {sname} (Pivot sheet)")
+                                continue
                                 
-                                if result_data:
-                                    zf.writestr(f"{folder_name}/{sname}_Audit.xlsx", result_data)
-                                    st.write(f"   ✅ Compared: {sname}")
+                            if sname in post_sheets:
+                                df_post = post_sheets[sname]
+                                
+                                # RULE 2: Special Logic for 1st Sheet (General Info)
+                                if i == 0:
+                                    st.write(f"   ⚙️ Processing: {sname} (General Info Logic)")
+                                    result = compare_general_info(df_pre, df_post)
                                 else:
-                                    st.write(f"   ⏩ Skipped: {sname} (Non-data sheet)")
+                                    st.write(f"   ✅ Comparing: {sname}")
+                                    result = compare_standard_sheets(df_pre, df_post)
+                                
+                                if result:
+                                    zf.writestr(f"{folder_name}/{sname}_Audit.xlsx", result)
+                                    
                     except Exception as e:
                         st.error(f"Error reading {fname}: {e}")
 
         st.success("Audit Complete!")
-        st.download_button(
-            label="📥 Download Comparison Results (ZIP)",
-            data=master_zip.getvalue(),
-            file_name="Network_Audit_Results.zip",
-            mime="application/zip"
-        )
+        st.download_button("📥 Download Results (ZIP)", master_zip.getvalue(), "Audit_Results.zip")
