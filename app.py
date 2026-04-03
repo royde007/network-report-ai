@@ -24,10 +24,17 @@ THIN_BORDER = Border(left=Side(style='thin'), right=Side(style='thin'),
 with st.sidebar:
     st.header("⚙️ Audit Configuration")
     
-    # Updated dropdown options to include Soft-Softer HO
+    # Updated dropdown options to include KPI Sector report
     report_name = st.selectbox(
         "Select Report Type",
-        options=["Access Distance Histogram", "Abnormal Release", "Cell Footprint", "Top Loaded", "Soft-Softer HO"],
+        options=[
+            "Access Distance Histogram", 
+            "Abnormal Release", 
+            "Cell Footprint", 
+            "Top Loaded", 
+            "Soft-Softer HO",
+            "KPI Sector report"
+        ],
         key="report_selector"
     )
     
@@ -40,7 +47,7 @@ with st.sidebar:
     st.divider()
     st.header("📋 Audit Instructions")
     st.markdown(f"**Current Mode:** {report_name}")
-    st.info("Comparison is restricted to the 'Sector Summary' sheet for this report type.")
+    st.info("Comparison is focused on the 'Detailed' sheet for the KPI Sector report.")
 
 # --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
@@ -219,8 +226,14 @@ if st.button("🚀 Run Global Audit"):
                             continue
                         
                         # --- MODULAR SWITCH LOGIC ---
-                        if report_name in ["Top Loaded", "Soft-Softer HO"]:
-                            # STRICT FILTER: Only process Sector Summary
+                        if report_name == "KPI Sector report":
+                            # Target the 'Detailed' sheet
+                            if sname == "Detailed":
+                                primary_key, secondary_key = "Sector Name", None
+                            else:
+                                continue 
+
+                        elif report_name in ["Top Loaded", "Soft-Softer HO"]:
                             if sname == "Sector Summary":
                                 primary_key, secondary_key = "Sector Name", None
                             else:
@@ -232,7 +245,7 @@ if st.button("🚀 Run Global Audit"):
                             else:
                                 primary_key, secondary_key = "Sector Name", "Carrier"
                         
-                        else: # Access Distance / Abnormal Release
+                        else: # Default (Access Distance / Abnormal Release)
                             primary_key, secondary_key = "Sector Name", "Carrier"
 
                         df_pre = streaming_load(fobj, sname, primary_key, secondary_key)
@@ -248,6 +261,6 @@ if st.button("🚀 Run Global Audit"):
             st.success(f"🏁 {tech_selection} Audit Complete!")
             st.download_button("📥 Download Results", zip_buffer.getvalue(), "Network_Audit_Results.zip")
         else:
-            st.error(f"No valid data found to compare for {report_name}. Ensure 'Sector Summary' exists.")
+            st.error(f"No valid data found to compare for {report_name}. Ensure the 'Detailed' sheet exists.")
     else:
         st.warning("Please upload both PRE and POST files.")
