@@ -1,8 +1,5 @@
 streamlit
 pandas
-langchain-openai
-langchain-experimental
 openpyxl
-xlsxwriter
-tabulate
 python-calamine
+xlsxwriter
