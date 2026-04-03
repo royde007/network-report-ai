@@ -24,11 +24,10 @@ THIN_BORDER = Border(left=Side(style='thin'), right=Side(style='thin'),
 with st.sidebar:
     st.header("⚙️ Audit Configuration")
     
-    # FORCED UPDATED LIST
+    # Updated dropdown options to include Top Loaded
     report_name = st.selectbox(
         "Select Report Type",
-        options=["Access Distance Histogram", "Abnormal Release", "Cell Footprint"],
-        index=0,
+        options=["Access Distance Histogram", "Abnormal Release", "Cell Footprint", "Top Loaded"],
         key="report_selector"
     )
     
@@ -41,7 +40,7 @@ with st.sidebar:
     st.divider()
     st.header("📋 Audit Instructions")
     st.markdown(f"**Current Mode:** {report_name}")
-    st.info("If 'Cell Footprint' is still missing, please refresh your browser (F5).")
+    st.info("Upload PRE and POST files to begin the comparison.")
 
 # --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
@@ -64,7 +63,6 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
             if i > 50: break 
             row_vals = [str(v).strip().lower() if v is not None else "" for v in row]
             
-            # Check for Primary and optional Secondary Key
             if s_key:
                 found = (p_key.lower() in row_vals and s_key.lower() in row_vals)
             else:
@@ -164,7 +162,7 @@ def create_comparison_report(df1, df2, p_key, s_key, tech):
             cell.border = THIN_BORDER
             if r_idx == 1: cell.font, cell.fill = Font(bold=True, size=14, color="FFFFFF"), HEADER_FILL
 
-    legend_data = [("✓ MATCH - Green background", GREEN_FILL, "Values match"), ("✗ MISMATCH - Light Red", LIGHT_RED_FILL, "Mismatch in row"), ("Bright Red", RED_FILL, "Cell level mismatch"), ("Yellow", YELLOW_FILL, "Missing record")]
+    legend_data = [("✓ MATCH", GREEN_FILL, "Values match"), ("✗ MISMATCH", LIGHT_RED_FILL, "Mismatch in row"), ("Cell Error", RED_FILL, "Cell level mismatch"), ("Unique", YELLOW_FILL, "Missing record")]
     for i, (text, fill, desc) in enumerate(legend_data):
         c1, c2 = ws_sum.cell(row=len(summary_rows) + i + 1, column=1, value=text), ws_sum.cell(row=len(summary_rows) + i + 1, column=2, value=desc)
         c1.fill, c1.border, c2.border = fill, THIN_BORDER, THIN_BORDER
@@ -190,15 +188,20 @@ if st.button("🚀 Run Global Audit"):
                         if i == 0 or sname.lower().endswith('pivot') or sname == "General Information":
                             continue
                         
-                        # --- SWITCH LOGIC FOR DYNAMIC KEYS ---
-                        if report_name == "Cell Footprint":
+                        # --- MODULAR SWITCH LOGIC ---
+                        if report_name == "Top Loaded":
+                            if sname == "Sector Summary":
+                                primary_key, secondary_key = "Sector Name", None
+                            else:
+                                primary_key, secondary_key = "Sector Name", "Carrier ID"
+                        
+                        elif report_name == "Cell Footprint":
                             if sname == "Cell Footprint":
                                 primary_key, secondary_key = "Sector Name", None
                             else:
                                 primary_key, secondary_key = "Sector Name", "Carrier"
-                        elif report_name == "Access Distance Histogram":
-                            primary_key, secondary_key = "Sector Name", "Carrier"
-                        else:
+                        
+                        else: # Default for Access Distance / Abnormal Release
                             primary_key, secondary_key = "Sector Name", "Carrier"
 
                         df_pre = streaming_load(fobj, sname, primary_key, secondary_key)
@@ -214,6 +217,6 @@ if st.button("🚀 Run Global Audit"):
             st.success(f"🏁 {tech_selection} Audit Complete!")
             st.download_button("📥 Download Results", zip_buffer.getvalue(), "Network_Audit_Results.zip")
         else:
-            st.error("No valid data found to compare. Ensure the Sector Name/Carrier columns exist.")
+            st.error("No valid data found to compare. Check your Column headers.")
     else:
         st.warning("Please upload both PRE and POST files.")
