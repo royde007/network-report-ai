@@ -59,13 +59,14 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
         # LOGIC FOR LEGACY .XLS FILES
         if filename.endswith('.xls'):
             # Note: requires 'xlrd' library
-            df_full = pd.read_excel(file_obj, sheet_name=sheet_name, header=None)
+            df_full = pd.read_excel(file_obj, sheet_name=sheet_name, header=None, engine='xlrd')
             header_row_idx = None
             
             for i, row in df_full.iterrows():
                 if i > 50: break
                 row_vals = [str(v).strip().lower() if pd.notnull(v) else "" for v in row]
                 
+                # Check for Primary and optional Secondary Key
                 if s_key:
                     found = (p_key.lower() in row_vals and s_key.lower() in row_vals)
                 else:
@@ -213,12 +214,11 @@ if st.button("🚀 Run Global Audit"):
                 if fname in post_dict:
                     st.info(f"📁 Processing: {fname}")
                     
-                    # Detect sheets using calamine for speed, fallback to xlrd for .xls
                     try:
                         xl = pd.ExcelFile(fobj)
                         sheet_names = xl.sheet_names
-                    except:
-                        st.error(f"Could not read sheet names from {fname}")
+                    except Exception as e:
+                        st.error(f"Could not read sheet names from {fname}: {e}")
                         continue
 
                     for i, sname in enumerate(sheet_names):
@@ -227,7 +227,6 @@ if st.button("🚀 Run Global Audit"):
                         
                         # --- MODULAR SWITCH LOGIC ---
                         if report_name == "Top Loaded":
-                            # Matches "Sector Summary" sheet exactly
                             if sname == "Sector Summary":
                                 primary_key, secondary_key = "Sector Name", None
                             else:
@@ -255,6 +254,6 @@ if st.button("🚀 Run Global Audit"):
             st.success(f"🏁 {tech_selection} Audit Complete!")
             st.download_button("📥 Download Results", zip_buffer.getvalue(), "Network_Audit_Results.zip")
         else:
-            st.error("No valid data found to compare.")
+            st.error("No valid data found to compare. Ensure the Sector Name/Carrier columns exist.")
     else:
         st.warning("Please upload both PRE and POST files.")
