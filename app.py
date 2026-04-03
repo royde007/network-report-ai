@@ -24,13 +24,11 @@ THIN_BORDER = Border(left=Side(style='thin'), right=Side(style='thin'),
 with st.sidebar:
     st.header("⚙️ Audit Configuration")
     
-    # 1. REPORT SELECTION (Switch Part 1)
     report_name = st.selectbox(
         "Select Report Type",
-        options=["Access Distance Histogram", "Abnormal Release"]
+        options=["Access Distance Histogram", "Abnormal Release", "Cell Footprint"]
     )
     
-    # 2. TECHNOLOGY SELECTION (New Requirement)
     tech_selection = st.selectbox(
         "Select Technology",
         options=["NR", "LTE", "UMTS", "GSM"]
@@ -45,7 +43,7 @@ with st.sidebar:
     2. **Column Order**: Preserved from PRE file.
     3. **Output**: Summary + Detailed tabs.
     """)
-    st.caption("v3.6 | Tech Selection Enabled")
+    st.caption("v3.7 | Cell Footprint Integration")
 
 # --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
@@ -67,7 +65,14 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
         for i, row in enumerate(ws.iter_rows(values_only=True), 1):
             if i > 50: break 
             row_vals = [str(v).strip().lower() if v is not None else "" for v in row]
-            if p_key.lower() in row_vals and s_key.lower() in row_vals:
+            
+            # Logic to handle single or dual keys
+            if s_key:
+                found_headers = (p_key.lower() in row_vals and s_key.lower() in row_vals)
+            else:
+                found_headers = (p_key.lower() in row_vals)
+
+            if found_headers:
                 header_row_idx = i
                 headers = [str(v).strip() if v is not None else f"Col_{j}" for j, v in enumerate(row)]
                 break
@@ -80,31 +85,34 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
     return None
 
 def create_comparison_report(df1, df2, p_key, s_key, tech):
-    # Mapping for dynamic keys
     cols_pre_map = {str(c).strip().lower(): c for c in df1.columns}
     cols_post_map = {str(c).strip().lower(): c for c in df2.columns}
     
     actual_p_key = cols_pre_map[p_key.lower()]
-    actual_s_key = cols_pre_map[s_key.lower()]
-
-    original_order = [c for c in df1.columns if c not in [actual_p_key, actual_s_key, 'K']]
-
-    df1['K'] = df1[actual_p_key].astype(str).str.strip() + '|' + df1[actual_s_key].astype(str).str.strip()
-    
     actual_p_post = cols_post_map[p_key.lower()]
-    actual_s_post = cols_post_map[s_key.lower()]
-    df2['K'] = df2[actual_p_post].astype(str).str.strip() + '|' + df2[actual_s_post].astype(str).str.strip()
     
+    # Handle single vs double key for index creation
+    if s_key:
+        actual_s_key = cols_pre_map[s_key.lower()]
+        actual_s_post = cols_post_map[s_key.lower()]
+        df1['K'] = df1[actual_p_key].astype(str).str.strip() + '|' + df1[actual_s_key].astype(str).str.strip()
+        df2['K'] = df2[actual_p_post].astype(str).str.strip() + '|' + df2[actual_s_post].astype(str).str.strip()
+        key_cols = [actual_p_key, actual_s_key]
+    else:
+        df1['K'] = df1[actual_p_key].astype(str).str.strip()
+        df2['K'] = df2[actual_p_post].astype(str).str.strip()
+        key_cols = [actual_p_key]
+
+    original_order = [c for c in df1.columns if c not in key_cols + ['K']]
     df1_idx = df1.drop_duplicates(subset='K').set_index('K')
     df2_idx = df2.drop_duplicates(subset='K').set_index('K')
-    
     all_keys = sorted(set(df1_idx.index).union(set(df2_idx.index)))
     
     wb = Workbook()
     ws_det = wb.active
     ws_det.title = "Comparison Results"
     
-    headers = [actual_p_key, actual_s_key, 'Status']
+    headers = key_cols + ['Status']
     for col in original_order:
         headers += [f"{col}\n(PRE)", f"{col}\n(POST)", f"{col}\nMatch?"]
     
@@ -116,10 +124,12 @@ def create_comparison_report(df1, df2, p_key, s_key, tech):
     stats = {"match": 0, "mismatch": 0, "only_pre": 0, "only_post": 0}
     
     for row_idx, key in enumerate(all_keys, 2):
-        k_parts = key.split('|', 1)
-        ws_det.cell(row=row_idx, column=1, value=k_parts[0]).border = THIN_BORDER
-        ws_det.cell(row=row_idx, column=2, value=k_parts[1]).border = THIN_BORDER
-        status_cell = ws_det.cell(row=row_idx, column=3)
+        k_parts = key.split('|') if s_key else [key]
+        for i, part in enumerate(k_parts):
+            ws_det.cell(row=row_idx, column=i+1, value=part).border = THIN_BORDER
+        
+        status_col_idx = len(key_cols) + 1
+        status_cell = ws_det.cell(row=row_idx, column=status_col_idx)
         status_cell.border = THIN_BORDER
 
         if key not in df1_idx.index:
@@ -129,7 +139,7 @@ def create_comparison_report(df1, df2, p_key, s_key, tech):
         else:
             status_cell.value = "IN BOTH FILES"
             row1, row2 = df1_idx.loc[key], df2_idx.loc[key]
-            has_mismatch, col_ptr = False, 4
+            has_mismatch, col_ptr = False, status_col_idx + 1
             for col in original_order:
                 v1, v2 = str(row1.get(col, 'NULL')), str(row2.get(col, 'NULL'))
                 c1, c2, m_cell = ws_det.cell(row=row_idx, column=col_ptr, value=v1), ws_det.cell(row=row_idx, column=col_ptr+1, value=v2), ws_det.cell(row=row_idx, column=col_ptr+2)
@@ -170,12 +180,6 @@ def create_comparison_report(df1, df2, p_key, s_key, tech):
 if st.button("🚀 Run Global Audit"):
     if pre_files and post_files:
         
-        # SWITCH LOGIC for Report Keys
-        if report_name == "Access Distance Histogram":
-            primary_key, secondary_key = "Sector Name", "Carrier"
-        else:
-            primary_key, secondary_key = "Sector Name", "Carrier" # Default keys
-
         pre_dict = {f.name: f for f in pre_files}
         post_dict = {f.name: f for f in post_files}
         zip_buffer = io.BytesIO()
@@ -190,12 +194,24 @@ if st.button("🚀 Run Global Audit"):
                         if i == 0 or sname.lower().endswith('pivot') or sname == "General Information":
                             continue
                         
+                        # JAVA-STYLE SWITCH LOGIC for dynamic sheet keys
+                        if report_name == "Access Distance Histogram":
+                            primary_key, secondary_key = "Sector Name", "Carrier"
+                        elif report_name == "Abnormal Release":
+                            primary_key, secondary_key = "Sector Name", "Carrier"
+                        elif report_name == "Cell Footprint":
+                            if sname == "Cell Footprint":
+                                primary_key, secondary_key = "Sector Name", None
+                            else:
+                                primary_key, secondary_key = "Sector Name", "Carrier"
+                        else:
+                            primary_key, secondary_key = "Sector Name", "Carrier"
+
                         df_pre = streaming_load(fobj, sname, primary_key, secondary_key)
                         df_post = streaming_load(post_dict[fname], sname, primary_key, secondary_key)
                         
                         if df_pre is not None and df_post is not None:
                             st.write(f"   ⚙️ Analyzing: {sname}...")
-                            # Passing tech_selection here
                             report_bytes = create_comparison_report(df_pre, df_post, primary_key, secondary_key, tech_selection)
                             zf.writestr(f"{fname.split('.')[0]}/{sname}_Audit.xlsx", report_bytes)
                             processed_any = True
