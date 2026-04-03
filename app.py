@@ -26,7 +26,7 @@ with st.sidebar:
     
     report_name = st.selectbox(
         "Select Report Type",
-        options=["Access Distance Histogram", "Abnormal Release", "Cell Footprint"]
+        options=["Access Distance Histogram","Cell Footprint"]
     )
     
     tech_selection = st.selectbox(
