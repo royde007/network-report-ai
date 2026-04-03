@@ -24,9 +24,10 @@ THIN_BORDER = Border(left=Side(style='thin'), right=Side(style='thin'),
 with st.sidebar:
     st.header("⚙️ Audit Configuration")
     
+    # Updated dropdown options to include Soft-Softer HO
     report_name = st.selectbox(
         "Select Report Type",
-        options=["Access Distance Histogram", "Abnormal Release", "Cell Footprint", "Top Loaded"],
+        options=["Access Distance Histogram", "Abnormal Release", "Cell Footprint", "Top Loaded", "Soft-Softer HO"],
         key="report_selector"
     )
     
@@ -39,7 +40,7 @@ with st.sidebar:
     st.divider()
     st.header("📋 Audit Instructions")
     st.markdown(f"**Current Mode:** {report_name}")
-    st.info("Upload PRE and POST files. Supports both .xls and .xlsx formats.")
+    st.info("Comparison is restricted to the 'Sector Summary' sheet for this report type.")
 
 # --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
@@ -58,25 +59,19 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
         
         # LOGIC FOR LEGACY .XLS FILES
         if filename.endswith('.xls'):
-            # Note: requires 'xlrd' library
             df_full = pd.read_excel(file_obj, sheet_name=sheet_name, header=None, engine='xlrd')
             header_row_idx = None
-            
             for i, row in df_full.iterrows():
                 if i > 50: break
                 row_vals = [str(v).strip().lower() if pd.notnull(v) else "" for v in row]
-                
-                # Check for Primary and optional Secondary Key
                 if s_key:
                     found = (p_key.lower() in row_vals and s_key.lower() in row_vals)
                 else:
                     found = (p_key.lower() in row_vals)
-                
                 if found:
                     header_row_idx = i
                     headers = [str(v).strip() if pd.notnull(v) else f"Col_{j}" for j, v in enumerate(row)]
                     break
-            
             if header_row_idx is not None:
                 df_data = df_full.iloc[header_row_idx + 1:].copy()
                 df_data.columns = headers
@@ -92,12 +87,10 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
             for i, row in enumerate(ws.iter_rows(values_only=True), 1):
                 if i > 50: break 
                 row_vals = [str(v).strip().lower() if v is not None else "" for v in row]
-                
                 if s_key:
                     found = (p_key.lower() in row_vals and s_key.lower() in row_vals)
                 else:
                     found = (p_key.lower() in row_vals)
-
                 if found:
                     header_row_idx = i
                     headers = [str(v).strip() if v is not None else f"Col_{j}" for j, v in enumerate(row)]
@@ -110,7 +103,7 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
         st.error(f"Error reading {sheet_name}: {e}")
     return None
 
-def create_comparison_report(df1, df2, p_key, s_key, tech):
+def create_comparison_report(df1, df2, p_key, s_key, tech, report_name):
     cols_pre_map = {str(c).strip().lower(): c for c in df1.columns}
     cols_post_map = {str(c).strip().lower(): c for c in df2.columns}
     
@@ -213,7 +206,6 @@ if st.button("🚀 Run Global Audit"):
             for fname, fobj in pre_dict.items():
                 if fname in post_dict:
                     st.info(f"📁 Processing: {fname}")
-                    
                     try:
                         xl = pd.ExcelFile(fobj)
                         sheet_names = xl.sheet_names
@@ -222,15 +214,17 @@ if st.button("🚀 Run Global Audit"):
                         continue
 
                     for i, sname in enumerate(sheet_names):
+                        # Global Skips
                         if i == 0 or sname.lower().endswith('pivot') or sname == "General Information":
                             continue
                         
                         # --- MODULAR SWITCH LOGIC ---
-                        if report_name == "Top Loaded":
+                        if report_name in ["Top Loaded", "Soft-Softer HO"]:
+                            # STRICT FILTER: Only process Sector Summary
                             if sname == "Sector Summary":
                                 primary_key, secondary_key = "Sector Name", None
                             else:
-                                primary_key, secondary_key = "Sector Name", "Carrier ID"
+                                continue 
                         
                         elif report_name == "Cell Footprint":
                             if sname == "Cell Footprint":
@@ -238,7 +232,7 @@ if st.button("🚀 Run Global Audit"):
                             else:
                                 primary_key, secondary_key = "Sector Name", "Carrier"
                         
-                        else:
+                        else: # Access Distance / Abnormal Release
                             primary_key, secondary_key = "Sector Name", "Carrier"
 
                         df_pre = streaming_load(fobj, sname, primary_key, secondary_key)
@@ -246,7 +240,7 @@ if st.button("🚀 Run Global Audit"):
                         
                         if df_pre is not None and df_post is not None:
                             st.write(f"⚙️ Analyzing: {sname}...")
-                            report_bytes = create_comparison_report(df_pre, df_post, primary_key, secondary_key, tech_selection)
+                            report_bytes = create_comparison_report(df_pre, df_post, primary_key, secondary_key, tech_selection, report_name)
                             zf.writestr(f"{fname.split('.')[0]}/{sname}_Audit.xlsx", report_bytes)
                             processed_any = True
         
@@ -254,6 +248,6 @@ if st.button("🚀 Run Global Audit"):
             st.success(f"🏁 {tech_selection} Audit Complete!")
             st.download_button("📥 Download Results", zip_buffer.getvalue(), "Network_Audit_Results.zip")
         else:
-            st.error("No valid data found to compare. Ensure the Sector Name/Carrier columns exist.")
+            st.error(f"No valid data found to compare for {report_name}. Ensure 'Sector Summary' exists.")
     else:
         st.warning("Please upload both PRE and POST files.")
