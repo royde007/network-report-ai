@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
 
 st.set_page_config(page_title="Network Report Auditor", layout="wide")
-st.title("📡 Multi-Sheet Network Comparison Agent")
+st.title("📡 Automatic Report Comparison Agent")
 
 # --- UI Layout ---
 api_key = st.sidebar.text_input("OpenAI API Key", type="password")
