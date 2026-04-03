@@ -24,7 +24,6 @@ THIN_BORDER = Border(left=Side(style='thin'), right=Side(style='thin'),
 with st.sidebar:
     st.header("⚙️ Audit Configuration")
     
-    # Updated dropdown options to include Top Loaded
     report_name = st.selectbox(
         "Select Report Type",
         options=["Access Distance Histogram", "Abnormal Release", "Cell Footprint", "Top Loaded"],
@@ -40,7 +39,7 @@ with st.sidebar:
     st.divider()
     st.header("📋 Audit Instructions")
     st.markdown(f"**Current Mode:** {report_name}")
-    st.info("Upload PRE and POST files to begin the comparison.")
+    st.info("Upload PRE and POST files. Supports both .xls and .xlsx formats.")
 
 # --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
@@ -52,30 +51,60 @@ with col2:
 # --- HELPER FUNCTIONS ---
 
 def streaming_load(file_obj, sheet_name, p_key, s_key):
+    """Handles both modern (.xlsx) and legacy (.xls) formats."""
     try:
         file_obj.seek(0)
-        wb = load_workbook(file_obj, read_only=True, data_only=True)
-        if sheet_name not in wb.sheetnames: return None
-        ws = wb[sheet_name]
-        data = []
-        header_row_idx = None
-        for i, row in enumerate(ws.iter_rows(values_only=True), 1):
-            if i > 50: break 
-            row_vals = [str(v).strip().lower() if v is not None else "" for v in row]
+        filename = getattr(file_obj, 'name', '').lower()
+        
+        # LOGIC FOR LEGACY .XLS FILES
+        if filename.endswith('.xls'):
+            # Note: requires 'xlrd' library
+            df_full = pd.read_excel(file_obj, sheet_name=sheet_name, header=None)
+            header_row_idx = None
             
-            if s_key:
-                found = (p_key.lower() in row_vals and s_key.lower() in row_vals)
-            else:
-                found = (p_key.lower() in row_vals)
+            for i, row in df_full.iterrows():
+                if i > 50: break
+                row_vals = [str(v).strip().lower() if pd.notnull(v) else "" for v in row]
+                
+                if s_key:
+                    found = (p_key.lower() in row_vals and s_key.lower() in row_vals)
+                else:
+                    found = (p_key.lower() in row_vals)
+                
+                if found:
+                    header_row_idx = i
+                    headers = [str(v).strip() if pd.notnull(v) else f"Col_{j}" for j, v in enumerate(row)]
+                    break
+            
+            if header_row_idx is not None:
+                df_data = df_full.iloc[header_row_idx + 1:].copy()
+                df_data.columns = headers
+                return df_data.dropna(how='all').reset_index(drop=True)
+                
+        # LOGIC FOR MODERN .XLSX / .XLSM FILES
+        else:
+            wb = load_workbook(file_obj, read_only=True, data_only=True)
+            if sheet_name not in wb.sheetnames: return None
+            ws = wb[sheet_name]
+            data = []
+            header_row_idx = None
+            for i, row in enumerate(ws.iter_rows(values_only=True), 1):
+                if i > 50: break 
+                row_vals = [str(v).strip().lower() if v is not None else "" for v in row]
+                
+                if s_key:
+                    found = (p_key.lower() in row_vals and s_key.lower() in row_vals)
+                else:
+                    found = (p_key.lower() in row_vals)
 
-            if found:
-                header_row_idx = i
-                headers = [str(v).strip() if v is not None else f"Col_{j}" for j, v in enumerate(row)]
-                break
-        if header_row_idx:
-            for row in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):
-                if any(v is not None for v in row): data.append(row)
-            return pd.DataFrame(data, columns=headers)
+                if found:
+                    header_row_idx = i
+                    headers = [str(v).strip() if v is not None else f"Col_{j}" for j, v in enumerate(row)]
+                    break
+            if header_row_idx:
+                for row in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):
+                    if any(v is not None for v in row): data.append(row)
+                return pd.DataFrame(data, columns=headers)
     except Exception as e:
         st.error(f"Error reading {sheet_name}: {e}")
     return None
@@ -183,13 +212,22 @@ if st.button("🚀 Run Global Audit"):
             for fname, fobj in pre_dict.items():
                 if fname in post_dict:
                     st.info(f"📁 Processing: {fname}")
-                    xl = pd.ExcelFile(fobj, engine='calamine')
-                    for i, sname in enumerate(xl.sheet_names):
+                    
+                    # Detect sheets using calamine for speed, fallback to xlrd for .xls
+                    try:
+                        xl = pd.ExcelFile(fobj)
+                        sheet_names = xl.sheet_names
+                    except:
+                        st.error(f"Could not read sheet names from {fname}")
+                        continue
+
+                    for i, sname in enumerate(sheet_names):
                         if i == 0 or sname.lower().endswith('pivot') or sname == "General Information":
                             continue
                         
                         # --- MODULAR SWITCH LOGIC ---
                         if report_name == "Top Loaded":
+                            # Matches "Sector Summary" sheet exactly
                             if sname == "Sector Summary":
                                 primary_key, secondary_key = "Sector Name", None
                             else:
@@ -201,7 +239,7 @@ if st.button("🚀 Run Global Audit"):
                             else:
                                 primary_key, secondary_key = "Sector Name", "Carrier"
                         
-                        else: # Default for Access Distance / Abnormal Release
+                        else:
                             primary_key, secondary_key = "Sector Name", "Carrier"
 
                         df_pre = streaming_load(fobj, sname, primary_key, secondary_key)
@@ -217,6 +255,6 @@ if st.button("🚀 Run Global Audit"):
             st.success(f"🏁 {tech_selection} Audit Complete!")
             st.download_button("📥 Download Results", zip_buffer.getvalue(), "Network_Audit_Results.zip")
         else:
-            st.error("No valid data found to compare. Check your Column headers.")
+            st.error("No valid data found to compare.")
     else:
         st.warning("Please upload both PRE and POST files.")
