@@ -24,7 +24,6 @@ THIN_BORDER = Border(left=Side(style='thin'), right=Side(style='thin'),
 with st.sidebar:
     st.header("⚙️ Audit Configuration")
     
-    # Updated dropdown options to include KPI Sector report
     report_name = st.selectbox(
         "Select Report Type",
         options=[
@@ -33,7 +32,8 @@ with st.sidebar:
             "Cell Footprint", 
             "Top Loaded", 
             "Soft-Softer HO",
-            "KPI Sector report"
+            "KPI Sector report",
+            "KPI Carrier report"
         ],
         key="report_selector"
     )
@@ -47,7 +47,7 @@ with st.sidebar:
     st.divider()
     st.header("📋 Audit Instructions")
     st.markdown(f"**Current Mode:** {report_name}")
-    st.info("Comparison is focused on the 'Detailed' sheet for the KPI Sector report.")
+    st.info("KPI Carrier mode is restricted to the 'Detailed' sheet using Sector + Carrier keys.")
 
 # --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
@@ -64,7 +64,6 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
         file_obj.seek(0)
         filename = getattr(file_obj, 'name', '').lower()
         
-        # LOGIC FOR LEGACY .XLS FILES
         if filename.endswith('.xls'):
             df_full = pd.read_excel(file_obj, sheet_name=sheet_name, header=None, engine='xlrd')
             header_row_idx = None
@@ -84,7 +83,6 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
                 df_data.columns = headers
                 return df_data.dropna(how='all').reset_index(drop=True)
                 
-        # LOGIC FOR MODERN .XLSX / .XLSM FILES
         else:
             wb = load_workbook(file_obj, read_only=True, data_only=True)
             if sheet_name not in wb.sheetnames: return None
@@ -221,13 +219,17 @@ if st.button("🚀 Run Global Audit"):
                         continue
 
                     for i, sname in enumerate(sheet_names):
-                        # Global Skips
                         if i == 0 or sname.lower().endswith('pivot') or sname == "General Information":
                             continue
                         
                         # --- MODULAR SWITCH LOGIC ---
-                        if report_name == "KPI Sector report":
-                            # Target the 'Detailed' sheet
+                        if report_name == "KPI Carrier report":
+                            if sname == "Detailed":
+                                primary_key, secondary_key = "Sector Name", "Carrier"
+                            else:
+                                continue 
+
+                        elif report_name == "KPI Sector report":
                             if sname == "Detailed":
                                 primary_key, secondary_key = "Sector Name", None
                             else:
@@ -245,7 +247,7 @@ if st.button("🚀 Run Global Audit"):
                             else:
                                 primary_key, secondary_key = "Sector Name", "Carrier"
                         
-                        else: # Default (Access Distance / Abnormal Release)
+                        else: # Access Distance / Abnormal Release
                             primary_key, secondary_key = "Sector Name", "Carrier"
 
                         df_pre = streaming_load(fobj, sname, primary_key, secondary_key)
@@ -261,6 +263,6 @@ if st.button("🚀 Run Global Audit"):
             st.success(f"🏁 {tech_selection} Audit Complete!")
             st.download_button("📥 Download Results", zip_buffer.getvalue(), "Network_Audit_Results.zip")
         else:
-            st.error(f"No valid data found to compare for {report_name}. Ensure the 'Detailed' sheet exists.")
+            st.error(f"No valid data found to compare for {report_name}.")
     else:
         st.warning("Please upload both PRE and POST files.")
