@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
 
 st.set_page_config(page_title="Network Report Analyzer", layout="wide")
-st.title("📡 Sector & Carrier Comparison Tool")
+st.title("📡 Report Comparison Tool")
 
 # Sidebar for instructions
 st.sidebar.header("Instructions")
