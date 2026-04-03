@@ -175,4 +175,8 @@ if st.button("🚀 Run Global Audit"):
         
         if processed_any:
             st.success("🏁 Audit Complete!")
-            st.download_button("📥 Download ZIP", zip_buffer.getvalue
+            st.download_button("📥 Download ZIP", zip_buffer.getvalue(), "Network_Audit_Results.zip")
+        else:
+            st.error("No matching sheets or columns found. Check if filenames match and 'Sector Name' exists.")
+    else:
+        st.warning("Please upload both PRE and POST files.")
