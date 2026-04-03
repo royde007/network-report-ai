@@ -24,27 +24,24 @@ THIN_BORDER = Border(left=Side(style='thin'), right=Side(style='thin'),
 with st.sidebar:
     st.header("⚙️ Audit Configuration")
     
-    # ENSURED "Cell Footprint" is in this list
+    # FORCED UPDATED LIST
     report_name = st.selectbox(
         "Select Report Type",
-        options=["Access Distance Histogram", "Abnormal Release", "Cell Footprint"]
+        options=["Access Distance Histogram", "Abnormal Release", "Cell Footprint"],
+        index=0,
+        key="report_selector"
     )
     
     tech_selection = st.selectbox(
         "Select Technology",
-        options=["NR", "LTE", "UMTS", "GSM"]
+        options=["NR", "LTE", "UMTS", "GSM"],
+        key="tech_selector"
     )
     
     st.divider()
     st.header("📋 Audit Instructions")
-    st.markdown(f"""
-    **Mode:** {report_name}
-    **Tech:** {tech_selection}
-    1. **Upload Files**: Select **PRE** and **POST** reports.
-    2. **Column Order**: Preserved from PRE file.
-    3. **Output**: Summary + Detailed tabs.
-    """)
-    st.caption("v3.9 | Dropdown Fixed")
+    st.markdown(f"**Current Mode:** {report_name}")
+    st.info("If 'Cell Footprint' is still missing, please refresh your browser (F5).")
 
 # --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
@@ -67,13 +64,13 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
             if i > 50: break 
             row_vals = [str(v).strip().lower() if v is not None else "" for v in row]
             
-            # Check for Primary Key and optionally Secondary Key
+            # Check for Primary and optional Secondary Key
             if s_key:
-                found_headers = (p_key.lower() in row_vals and s_key.lower() in row_vals)
+                found = (p_key.lower() in row_vals and s_key.lower() in row_vals)
             else:
-                found_headers = (p_key.lower() in row_vals)
+                found = (p_key.lower() in row_vals)
 
-            if found_headers:
+            if found:
                 header_row_idx = i
                 headers = [str(v).strip() if v is not None else f"Col_{j}" for j, v in enumerate(row)]
                 break
@@ -92,7 +89,6 @@ def create_comparison_report(df1, df2, p_key, s_key, tech):
     actual_p_key = cols_pre_map[p_key.lower()]
     actual_p_post = cols_post_map[p_key.lower()]
     
-    # Logic for Single vs Dual Keys
     if s_key:
         actual_s_key = cols_pre_map[s_key.lower()]
         actual_s_post = cols_post_map[s_key.lower()]
@@ -202,8 +198,6 @@ if st.button("🚀 Run Global Audit"):
                                 primary_key, secondary_key = "Sector Name", "Carrier"
                         elif report_name == "Access Distance Histogram":
                             primary_key, secondary_key = "Sector Name", "Carrier"
-                        elif report_name == "Abnormal Release":
-                            primary_key, secondary_key = "Sector Name", "Carrier"
                         else:
                             primary_key, secondary_key = "Sector Name", "Carrier"
 
@@ -211,7 +205,7 @@ if st.button("🚀 Run Global Audit"):
                         df_post = streaming_load(post_dict[fname], sname, primary_key, secondary_key)
                         
                         if df_pre is not None and df_post is not None:
-                            st.write(f"   ⚙️ Analyzing: {sname}...")
+                            st.write(f"⚙️ Analyzing: {sname}...")
                             report_bytes = create_comparison_report(df_pre, df_post, primary_key, secondary_key, tech_selection)
                             zf.writestr(f"{fname.split('.')[0]}/{sname}_Audit.xlsx", report_bytes)
                             processed_any = True
@@ -220,6 +214,6 @@ if st.button("🚀 Run Global Audit"):
             st.success(f"🏁 {tech_selection} Audit Complete!")
             st.download_button("📥 Download Results", zip_buffer.getvalue(), "Network_Audit_Results.zip")
         else:
-            st.error("No valid data found to compare.")
+            st.error("No valid data found to compare. Ensure the Sector Name/Carrier columns exist.")
     else:
         st.warning("Please upload both PRE and POST files.")
