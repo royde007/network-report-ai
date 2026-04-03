@@ -24,7 +24,7 @@ THIN_BORDER = Border(left=Side(style='thin'), right=Side(style='thin'),
 with st.sidebar:
     st.header("⚙️ Audit Configuration")
     
-    # ADDED "Cell Footprint" to the options here
+    # ENSURED "Cell Footprint" is in this list
     report_name = st.selectbox(
         "Select Report Type",
         options=["Access Distance Histogram", "Abnormal Release", "Cell Footprint"]
@@ -44,7 +44,7 @@ with st.sidebar:
     2. **Column Order**: Preserved from PRE file.
     3. **Output**: Summary + Detailed tabs.
     """)
-    st.caption("v3.8 | Fixed Dropdown & Logic")
+    st.caption("v3.9 | Dropdown Fixed")
 
 # --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
@@ -67,7 +67,7 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
             if i > 50: break 
             row_vals = [str(v).strip().lower() if v is not None else "" for v in row]
             
-            # Flexible logic for single (Cell Footprint) or dual keys
+            # Check for Primary Key and optionally Secondary Key
             if s_key:
                 found_headers = (p_key.lower() in row_vals and s_key.lower() in row_vals)
             else:
@@ -92,6 +92,7 @@ def create_comparison_report(df1, df2, p_key, s_key, tech):
     actual_p_key = cols_pre_map[p_key.lower()]
     actual_p_post = cols_post_map[p_key.lower()]
     
+    # Logic for Single vs Dual Keys
     if s_key:
         actual_s_key = cols_pre_map[s_key.lower()]
         actual_s_post = cols_post_map[s_key.lower()]
@@ -193,7 +194,7 @@ if st.button("🚀 Run Global Audit"):
                         if i == 0 or sname.lower().endswith('pivot') or sname == "General Information":
                             continue
                         
-                        # --- SWITCH LOGIC FOR KEYS ---
+                        # --- SWITCH LOGIC FOR DYNAMIC KEYS ---
                         if report_name == "Cell Footprint":
                             if sname == "Cell Footprint":
                                 primary_key, secondary_key = "Sector Name", None
@@ -201,8 +202,9 @@ if st.button("🚀 Run Global Audit"):
                                 primary_key, secondary_key = "Sector Name", "Carrier"
                         elif report_name == "Access Distance Histogram":
                             primary_key, secondary_key = "Sector Name", "Carrier"
+                        elif report_name == "Abnormal Release":
+                            primary_key, secondary_key = "Sector Name", "Carrier"
                         else:
-                            # Default fallback
                             primary_key, secondary_key = "Sector Name", "Carrier"
 
                         df_pre = streaming_load(fobj, sname, primary_key, secondary_key)
@@ -218,6 +220,6 @@ if st.button("🚀 Run Global Audit"):
             st.success(f"🏁 {tech_selection} Audit Complete!")
             st.download_button("📥 Download Results", zip_buffer.getvalue(), "Network_Audit_Results.zip")
         else:
-            st.error("No valid data found to compare. Check if keys exist.")
+            st.error("No valid data found to compare.")
     else:
         st.warning("Please upload both PRE and POST files.")
