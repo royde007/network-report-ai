@@ -34,7 +34,8 @@ with st.sidebar:
             "Soft-Softer HO",
             "KPI Sector report",
             "KPI Carrier report",
-            "Swapped Sectors"
+            "Swapped Sectors",
+            "IRAT Events"
         ],
         key="report_selector"
     )
@@ -48,7 +49,7 @@ with st.sidebar:
     st.divider()
     st.header("📋 Audit Instructions")
     st.markdown(f"**Current Mode:** {report_name}")
-    st.info("Logic updated to handle multi-column composite keys for Abnormal Release.")
+    st.info("IRAT Events mode uses a 4-column composite key for row alignment.")
 
 # --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
@@ -60,12 +61,10 @@ with col2:
 # --- HELPER FUNCTIONS ---
 
 def streaming_load(file_obj, sheet_name, key_list):
-    """Handles loading and searches for all keys in the key_list."""
+    """Loads data and scans first 50 rows to find all keys in key_list."""
     try:
         file_obj.seek(0)
         filename = getattr(file_obj, 'name', '').lower()
-        
-        # Lowercase key list for comparison
         target_keys = [k.lower() for k in key_list]
         
         if filename.endswith('.xls'):
@@ -74,7 +73,6 @@ def streaming_load(file_obj, sheet_name, key_list):
             for i, row in df_full.iterrows():
                 if i > 50: break
                 row_vals = [str(v).strip().lower() if pd.notnull(v) else "" for v in row]
-                # Check if ALL keys in the list exist in this row
                 if all(k in row_vals for k in target_keys):
                     header_row_idx = i
                     headers = [str(v).strip() if pd.notnull(v) else f"Col_{j}" for j, v in enumerate(row)]
@@ -83,7 +81,6 @@ def streaming_load(file_obj, sheet_name, key_list):
                 df_data = df_full.iloc[header_row_idx + 1:].copy()
                 df_data.columns = headers
                 return df_data.dropna(how='all').reset_index(drop=True)
-                
         else:
             wb = load_workbook(file_obj, read_only=True, data_only=True)
             if sheet_name not in wb.sheetnames: return None
@@ -106,14 +103,13 @@ def streaming_load(file_obj, sheet_name, key_list):
     return None
 
 def create_comparison_report(df1, df2, key_list, tech, report_name):
-    # Map headers to original case
     cols_pre_map = {str(c).strip().lower(): c for c in df1.columns}
     cols_post_map = {str(c).strip().lower(): c for c in df2.columns}
     
     actual_keys_pre = [cols_pre_map[k.lower()] for k in key_list]
     actual_keys_post = [cols_post_map[k.lower()] for k in key_list]
     
-    # Generate Composite Key 'K'
+    # Composite Key Generation
     df1['K'] = df1[actual_keys_pre].astype(str).agg('|'.join, axis=1)
     df2['K'] = df2[actual_keys_post].astype(str).agg('|'.join, axis=1)
 
@@ -126,7 +122,6 @@ def create_comparison_report(df1, df2, key_list, tech, report_name):
     ws_det = wb.active
     ws_det.title = "Comparison Results"
     
-    # Header construction: Key Columns + Status + Data Columns
     headers = actual_keys_pre + ['Status']
     for col in original_order:
         headers += [f"{col}\n(PRE)", f"{col}\n(POST)", f"{col}\nMatch?"]
@@ -139,7 +134,6 @@ def create_comparison_report(df1, df2, key_list, tech, report_name):
     stats = {"match": 0, "mismatch": 0, "only_pre": 0, "only_post": 0}
     
     for row_idx, key in enumerate(all_keys, 2):
-        # Split composite key back to display in individual columns
         k_parts = key.split('|')
         for i, part in enumerate(k_parts):
             ws_det.cell(row=row_idx, column=i+1, value=part).border = THIN_BORDER
@@ -215,8 +209,14 @@ if st.button("🚀 Run Global Audit"):
                         if i == 0 or sname.lower().endswith('pivot') or sname == "General Information":
                             continue
                         
-                        # --- MODULAR SWITCH LOGIC (USING KEY LISTS) ---
-                        if report_name == "Abnormal Release":
+                        # --- MODULAR SWITCH LOGIC ---
+                        if report_name == "IRAT Events":
+                            if sname == "IRAT Event":
+                                key_list = ["Call Start Day", "Call Start Time", "Call Release Time", "IMSI"]
+                            else:
+                                continue 
+
+                        elif report_name == "Abnormal Release":
                             if sname == "Detailed":
                                 key_list = ["Call Start Day", "Call Start Time", "Call Release Time", "Call Duration", "IMSI"]
                             else:
