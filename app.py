@@ -24,7 +24,6 @@ THIN_BORDER = Border(left=Side(style='thin'), right=Side(style='thin'),
 with st.sidebar:
     st.header("⚙️ Audit Configuration")
     
-    # Updated dropdown options to include Swapped Sectors
     report_name = st.selectbox(
         "Select Report Type",
         options=[
@@ -49,7 +48,7 @@ with st.sidebar:
     st.divider()
     st.header("📋 Audit Instructions")
     st.markdown(f"**Current Mode:** {report_name}")
-    st.info("Swapped Sectors mode is restricted to the 'Swapped Sectors' sheet only.")
+    st.info("Logic updated to handle multi-column composite keys for Abnormal Release.")
 
 # --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
@@ -60,24 +59,23 @@ with col2:
 
 # --- HELPER FUNCTIONS ---
 
-def streaming_load(file_obj, sheet_name, p_key, s_key):
-    """Handles both modern (.xlsx) and legacy (.xls) formats."""
+def streaming_load(file_obj, sheet_name, key_list):
+    """Handles loading and searches for all keys in the key_list."""
     try:
         file_obj.seek(0)
         filename = getattr(file_obj, 'name', '').lower()
         
-        # LOGIC FOR LEGACY .XLS FILES
+        # Lowercase key list for comparison
+        target_keys = [k.lower() for k in key_list]
+        
         if filename.endswith('.xls'):
             df_full = pd.read_excel(file_obj, sheet_name=sheet_name, header=None, engine='xlrd')
             header_row_idx = None
             for i, row in df_full.iterrows():
                 if i > 50: break
                 row_vals = [str(v).strip().lower() if pd.notnull(v) else "" for v in row]
-                if s_key:
-                    found = (p_key.lower() in row_vals and s_key.lower() in row_vals)
-                else:
-                    found = (p_key.lower() in row_vals)
-                if found:
+                # Check if ALL keys in the list exist in this row
+                if all(k in row_vals for k in target_keys):
                     header_row_idx = i
                     headers = [str(v).strip() if pd.notnull(v) else f"Col_{j}" for j, v in enumerate(row)]
                     break
@@ -86,7 +84,6 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
                 df_data.columns = headers
                 return df_data.dropna(how='all').reset_index(drop=True)
                 
-        # LOGIC FOR MODERN .XLSX / .XLSM FILES
         else:
             wb = load_workbook(file_obj, read_only=True, data_only=True)
             if sheet_name not in wb.sheetnames: return None
@@ -96,11 +93,7 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
             for i, row in enumerate(ws.iter_rows(values_only=True), 1):
                 if i > 50: break 
                 row_vals = [str(v).strip().lower() if v is not None else "" for v in row]
-                if s_key:
-                    found = (p_key.lower() in row_vals and s_key.lower() in row_vals)
-                else:
-                    found = (p_key.lower() in row_vals)
-                if found:
+                if all(k in row_vals for k in target_keys):
                     header_row_idx = i
                     headers = [str(v).strip() if v is not None else f"Col_{j}" for j, v in enumerate(row)]
                     break
@@ -112,25 +105,19 @@ def streaming_load(file_obj, sheet_name, p_key, s_key):
         st.error(f"Error reading {sheet_name}: {e}")
     return None
 
-def create_comparison_report(df1, df2, p_key, s_key, tech, report_name):
+def create_comparison_report(df1, df2, key_list, tech, report_name):
+    # Map headers to original case
     cols_pre_map = {str(c).strip().lower(): c for c in df1.columns}
     cols_post_map = {str(c).strip().lower(): c for c in df2.columns}
     
-    actual_p_key = cols_pre_map[p_key.lower()]
-    actual_p_post = cols_post_map[p_key.lower()]
+    actual_keys_pre = [cols_pre_map[k.lower()] for k in key_list]
+    actual_keys_post = [cols_post_map[k.lower()] for k in key_list]
     
-    if s_key:
-        actual_s_key = cols_pre_map[s_key.lower()]
-        actual_s_post = cols_post_map[s_key.lower()]
-        df1['K'] = df1[actual_p_key].astype(str).str.strip() + '|' + df1[actual_s_key].astype(str).str.strip()
-        df2['K'] = df2[actual_p_post].astype(str).str.strip() + '|' + df2[actual_s_post].astype(str).str.strip()
-        key_cols = [actual_p_key, actual_s_key]
-    else:
-        df1['K'] = df1[actual_p_key].astype(str).str.strip()
-        df2['K'] = df2[actual_p_post].astype(str).str.strip()
-        key_cols = [actual_p_key]
+    # Generate Composite Key 'K'
+    df1['K'] = df1[actual_keys_pre].astype(str).agg('|'.join, axis=1)
+    df2['K'] = df2[actual_keys_post].astype(str).agg('|'.join, axis=1)
 
-    original_order = [c for c in df1.columns if c not in key_cols + ['K']]
+    original_order = [c for c in df1.columns if c not in actual_keys_pre + ['K']]
     df1_idx = df1.drop_duplicates(subset='K').set_index('K')
     df2_idx = df2.drop_duplicates(subset='K').set_index('K')
     all_keys = sorted(set(df1_idx.index).union(set(df2_idx.index)))
@@ -139,7 +126,8 @@ def create_comparison_report(df1, df2, p_key, s_key, tech, report_name):
     ws_det = wb.active
     ws_det.title = "Comparison Results"
     
-    headers = key_cols + ['Status']
+    # Header construction: Key Columns + Status + Data Columns
+    headers = actual_keys_pre + ['Status']
     for col in original_order:
         headers += [f"{col}\n(PRE)", f"{col}\n(POST)", f"{col}\nMatch?"]
     
@@ -151,11 +139,12 @@ def create_comparison_report(df1, df2, p_key, s_key, tech, report_name):
     stats = {"match": 0, "mismatch": 0, "only_pre": 0, "only_post": 0}
     
     for row_idx, key in enumerate(all_keys, 2):
-        k_parts = key.split('|') if s_key else [key]
+        # Split composite key back to display in individual columns
+        k_parts = key.split('|')
         for i, part in enumerate(k_parts):
             ws_det.cell(row=row_idx, column=i+1, value=part).border = THIN_BORDER
         
-        status_col_idx = len(key_cols) + 1
+        status_col_idx = len(actual_keys_pre) + 1
         status_cell = ws_det.cell(row=row_idx, column=status_col_idx)
         status_cell.border = THIN_BORDER
 
@@ -182,7 +171,7 @@ def create_comparison_report(df1, df2, p_key, s_key, tech, report_name):
     ws_sum = wb.create_sheet("Summary", 0)
     summary_rows = [
         ["COMPARISON SUMMARY", ""], [""], ["Audit Metadata:", ""],
-        ["Report Type", report_name], ["Technology", tech], ["Total Unique Keys", len(all_keys)],
+        ["Report Type", report_name], ["Technology", tech], ["Total Unique Rows", len(all_keys)],
         ["", ""], ["Comparison Results:", ""],
         ["✓ Matching Records", stats["match"]], ["✗ Mismatching Records", stats["mismatch"]],
         ["📄 Records Only in PRE", stats["only_pre"]], ["📄 Records Only in POST", stats["only_post"]],
@@ -223,51 +212,49 @@ if st.button("🚀 Run Global Audit"):
                         continue
 
                     for i, sname in enumerate(sheet_names):
-                        # Global Skips
                         if i == 0 or sname.lower().endswith('pivot') or sname == "General Information":
                             continue
                         
-                        # --- MODULAR SWITCH LOGIC ---
-                        if report_name == "Swapped Sectors":
-                            # Target the 'Swapped Sectors' sheet
+                        # --- MODULAR SWITCH LOGIC (USING KEY LISTS) ---
+                        if report_name == "Abnormal Release":
+                            if sname == "Detailed":
+                                key_list = ["Call Start Day", "Call Start Time", "Call Release Time", "Call Duration", "IMSI"]
+                            else:
+                                continue 
+
+                        elif report_name == "Swapped Sectors":
                             if sname == "Swapped Sectors":
-                                primary_key, secondary_key = "Sector Name", None
+                                key_list = ["Sector Name"]
                             else:
                                 continue 
 
-                        elif report_name == "KPI Carrier report":
-                            if sname == "Detailed":
-                                primary_key, secondary_key = "Sector Name", "Carrier"
+                        elif report_name in ["KPI Carrier report", "Access Distance Histogram"]:
+                            if sname in ["Detailed", "Access Distance Histogram"]:
+                                key_list = ["Sector Name", "Carrier"]
                             else:
                                 continue 
 
-                        elif report_name == "KPI Sector report":
-                            if sname == "Detailed":
-                                primary_key, secondary_key = "Sector Name", None
-                            else:
-                                continue 
-
-                        elif report_name in ["Top Loaded", "Soft-Softer HO"]:
-                            if sname == "Sector Summary":
-                                primary_key, secondary_key = "Sector Name", None
+                        elif report_name in ["KPI Sector report", "Top Loaded", "Soft-Softer HO"]:
+                            if sname in ["Detailed", "Sector Summary"]:
+                                key_list = ["Sector Name"]
                             else:
                                 continue 
                         
                         elif report_name == "Cell Footprint":
                             if sname == "Cell Footprint":
-                                primary_key, secondary_key = "Sector Name", None
+                                key_list = ["Sector Name"]
                             else:
-                                primary_key, secondary_key = "Sector Name", "Carrier"
+                                key_list = ["Sector Name", "Carrier"]
                         
-                        else: # Default (Access Distance / Abnormal Release)
-                            primary_key, secondary_key = "Sector Name", "Carrier"
+                        else:
+                            key_list = ["Sector Name", "Carrier"]
 
-                        df_pre = streaming_load(fobj, sname, primary_key, secondary_key)
-                        df_post = streaming_load(post_dict[fname], sname, primary_key, secondary_key)
+                        df_pre = streaming_load(fobj, sname, key_list)
+                        df_post = streaming_load(post_dict[fname], sname, key_list)
                         
                         if df_pre is not None and df_post is not None:
                             st.write(f"⚙️ Analyzing: {sname}...")
-                            report_bytes = create_comparison_report(df_pre, df_post, primary_key, secondary_key, tech_selection, report_name)
+                            report_bytes = create_comparison_report(df_pre, df_post, key_list, tech_selection, report_name)
                             zf.writestr(f"{fname.split('.')[0]}/{sname}_Audit.xlsx", report_bytes)
                             processed_any = True
         
@@ -275,6 +262,6 @@ if st.button("🚀 Run Global Audit"):
             st.success(f"🏁 {tech_selection} Audit Complete!")
             st.download_button("📥 Download Results", zip_buffer.getvalue(), "Network_Audit_Results.zip")
         else:
-            st.error(f"No valid data found to compare for {report_name}. Ensure 'Swapped Sectors' sheet exists.")
+            st.error(f"No valid data found to compare for {report_name}.")
     else:
         st.warning("Please upload both PRE and POST files.")
