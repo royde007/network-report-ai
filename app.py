@@ -7,7 +7,7 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Network Report Auditor", layout="wide")
-st.title("📡 Sector & Carrier Keyed Comparison Tool")
+st.title("📡 Automatic Report Comparison Tool")
 
 # --- STYLES & COLORS ---
 RED_FILL = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid')
@@ -49,7 +49,7 @@ with st.sidebar:
     st.divider()
     st.header("📋 Audit Instructions")
     st.markdown(f"**Current Mode:** {report_name}")
-    st.info("IRAT Events mode uses a 4-column composite key for row alignment.")
+    st.info("Comparison is done based on the unique key obtained from both the reports.")
 
 # --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
